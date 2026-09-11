@@ -5,6 +5,8 @@
   "installCommand": "cd client && npm install",
   "framework": "vite",
   "rewrites": [
+    { "source": "/api/v1/ai/triage-turn", "destination": "/api/triage-turn" },
+    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

@@ -11,6 +11,7 @@ import { useCompleteTriageMutation } from '../../store/apiSlice';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { Globe } from 'lucide-react';
+import { evaluateClinicalTriage } from '../../utils/clinicalTriageEngine';
 
 const VOICE_LANG_OPTIONS = [
   { label: 'English', value: 'English', bcp47: 'en-US' },
@@ -166,53 +167,29 @@ export default function TriageChat() {
     if (!textToSend.trim()) return;
 
     const newMsg = { id: Date.now(), role: 'user', text: textToSend };
-    setMessages(prev => [...prev, newMsg]);
+    const updatedMessages = [...messages, newMsg];
+    setMessages(updatedMessages);
     setInput('');
     setQuickReplies([]);
     setIsLoading(true);
 
-    if (isOffline) {
-      setTimeout(() => {
-        setMessages(prev => [...prev, { 
-          id: Date.now() + 1, 
-          role: 'ai', 
-          text: "You are currently offline. Your assessment has been noted, but AI analysis is paused. You can finish to save your triage locally."
-        }]);
-        setIsLoading(false);
-      }, 1000);
-      return;
-    }
-
-    try {
-      const aiServiceUrl = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8000/api/v1/ai';
-      const response = await fetch(`${aiServiceUrl}/triage-turn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patient_input: newMsg.text,
-          language: voiceLang,   // Use locked session language, not global context
-          empathy_mode: true,
-          conversation_history: messages.map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text }))
-        })
-      });
-      const data = await response.json();
-      
-      const aiText = data.data?.ai_response || "I understand. Let me connect you to triage.";
+    const applyTriageData = (triageData) => {
+      const aiText = triageData?.ai_response || "I understand. Let me connect you to triage.";
       setMessages(prev => [...prev, { 
         id: Date.now() + 1, 
         role: 'ai', 
         text: aiText
       }]);
-      
-      if (data.data?.quick_replies && Array.isArray(data.data.quick_replies)) {
-        setQuickReplies(data.data.quick_replies);
+
+      if (triageData?.quick_replies && Array.isArray(triageData.quick_replies)) {
+        setQuickReplies(triageData.quick_replies);
       }
 
       // Accumulate SOCRATES data — merge new fields with existing
-      if (data.data?.socrates_extracted) {
+      if (triageData?.socrates_extracted) {
         setSocratesData(prev => {
           const updated = { ...prev };
-          for (const [key, val] of Object.entries(data.data.socrates_extracted)) {
+          for (const [key, val] of Object.entries(triageData.socrates_extracted)) {
             if (val && typeof val === 'string' && val.trim() !== '') {
               updated[key] = val;
             }
@@ -222,33 +199,75 @@ export default function TriageChat() {
       }
 
       // Accumulate AYUSH data
-      if (data.data?.ayush_extracted && Object.keys(data.data.ayush_extracted).length > 0) {
-        setAyushData(prev => ({ ...prev, ...data.data.ayush_extracted }));
+      if (triageData?.ayush_extracted && Object.keys(triageData.ayush_extracted).length > 0) {
+        setAyushData(prev => ({ ...prev, ...triageData.ayush_extracted }));
       }
 
       // Track suggested department
-      if (data.data?.suggested_department) {
-        setSuggestedDepartment(data.data.suggested_department);
+      if (triageData?.suggested_department) {
+        setSuggestedDepartment(triageData.suggested_department);
       }
 
       // If emergency detected, escalate severity
-      if (data.data?.is_emergency) {
+      if (triageData?.is_emergency) {
         setDetectedSeverity('EMERGENCY');
         setQuickReplies([
-          voiceLang === 'Hindi' ? "तुरंत नर्स को बुलाएं" : "Call Emergency Nurse Immediately",
-          voiceLang === 'Hindi' ? "मैं इमरजेंसी वार्ड जा रहा हूँ" : "Go to Emergency Bay"
+          voiceLang === 'Hindi' ? "तुरंत नर्स को बुलाएं" : (voiceLang === 'Bengali' ? "জরুরি নার্স ডাকুন" : "Call Emergency Nurse Immediately"),
+          voiceLang === 'Hindi' ? "मैं इमरजेंसी वार्ड जा रहा हूँ" : (voiceLang === 'Bengali' ? "ইমার্জেন্সি বে-তে যাচ্ছি" : "Go to Emergency Bay")
         ]);
       }
 
       // Read AI response aloud if not muted
       speakText(aiText);
+    };
+
+    if (isOffline) {
+      // Offline / Rural Mode: Process with on-device Clinical Rule Engine!
+      setTimeout(() => {
+        const localData = evaluateClinicalTriage(newMsg.text, voiceLang, updatedMessages);
+        applyTriageData(localData);
+        setIsLoading(false);
+      }, 600);
+      return;
+    }
+
+    try {
+      // Determine service URL:
+      // If VITE_AI_SERVICE_URL is explicitly set and not pointing to localhost in production, use it.
+      // Otherwise, use relative '/api' which routes to Vercel serverless function.
+      let aiServiceUrl = import.meta.env.VITE_AI_SERVICE_URL;
+      const isProd = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+
+      if (!aiServiceUrl || (isProd && aiServiceUrl.includes('localhost'))) {
+        aiServiceUrl = '/api';
+      }
+
+      const response = await fetch(`${aiServiceUrl}/triage-turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patient_input: newMsg.text,
+          language: voiceLang,   // Use locked session language, not global context
+          empathy_mode: true,
+          conversation_history: updatedMessages.map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text }))
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`AI API status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data?.data) {
+        applyTriageData(data.data);
+      } else {
+        throw new Error("Invalid response format from AI service");
+      }
     } catch (error) {
-      console.error('Triage API error:', error);
-      setMessages(prev => [...prev, { 
-        id: Date.now() + 1, 
-        role: 'ai', 
-        text: "I am having a brief moment reconnecting. Please feel free to repeat or click 'Finish & Send' to proceed directly to the triage desk." 
-      }]);
+      console.warn('AI Service unavailable, activating clinical fallback engine:', error);
+      // Seamlessly fall back to on-device Clinical Rule Engine
+      const fallbackData = evaluateClinicalTriage(newMsg.text, voiceLang, updatedMessages);
+      applyTriageData(fallbackData);
     } finally {
       setIsLoading(false);
     }
