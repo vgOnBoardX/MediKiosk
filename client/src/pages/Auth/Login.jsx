@@ -42,39 +42,68 @@ export default function Login() {
   const switchTab = (t) => { setTab(t); setError(null); };
 
   const handleLogin = async (e) => {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     setError(null);
     setLoading(true);
-    const res = await login(email, password, tier);
-    setLoading(false);
-    if (res.success) {
-      navigate(getDashboardPath(res.user?.role));
-    } else {
-      setError(res.error || 'Login failed. Check your credentials.');
+    try {
+      const res = await login(email, password, tier);
+      if (res.success) {
+        navigate(getDashboardPath(res.user?.role));
+      } else {
+        setError(res.error || 'Login failed. Check your credentials.');
+      }
+    } catch (err) {
+      setError(err.message || 'Login failed. Check your credentials.');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleRegister = async (e) => {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     setError(null);
     if (!name.trim()) return setError('Please enter your full name.');
     if (password.length < 6) return setError('Password must be at least 6 characters.');
     if (password !== confirmPassword) return setError('Passwords do not match.');
     setLoading(true);
-    const res = await register(email, password, name.trim(), role, tier);
-    setLoading(false);
-    if (res.success) {
-      navigate(getDashboardPath(res.user?.role));
-    } else {
-      const msg = res.error || 'Registration failed.';
-      if (msg.toLowerCase().includes('already')) {
-        setError(null);
-        // Auto-switch to login tab with message
-        switchTab('login');
-        setTimeout(() => setError('⚡ Account exists! Sign in with your password below.'), 50);
+    try {
+      const res = await register(email, password, name.trim(), role, tier);
+      if (res.success) {
+        navigate(getDashboardPath(res.user?.role));
       } else {
-        setError(msg);
+        const msg = res.error || 'Registration failed.';
+        if (msg.toLowerCase().includes('already')) {
+          setError(null);
+          // Auto-switch to login tab with message
+          switchTab('login');
+          setTimeout(() => setError('⚡ Account exists! Sign in with your password below.'), 50);
+        } else {
+          setError(msg);
+        }
       }
+    } catch (err) {
+      setError(err.message || 'Registration failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickDemo = async (demoRole, demoEmail) => {
+    setEmail(demoEmail);
+    setPassword('demo1234');
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await login(demoEmail, 'demo1234', tier);
+      if (res.success) {
+        navigate(getDashboardPath(res.user?.role || demoRole));
+      } else {
+        setError(res.error || 'Quick login failed.');
+      }
+    } catch (err) {
+      setError('Quick login failed.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -150,6 +179,26 @@ export default function Login() {
                     Create an account →
                   </button>
                 </p>
+
+                <div className="pt-3 border-t border-white/5">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 mb-2 text-center">
+                    ⚡ Instant Demo Access (1-Click)
+                  </p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button type="button" onClick={() => handleQuickDemo('DOCTOR', 'doctor@hospital.gov.in')}
+                      className="py-1.5 px-2 rounded-lg bg-sky-950/60 border border-sky-500/30 text-sky-300 hover:bg-sky-900/60 text-[11px] font-medium transition-colors flex items-center justify-center gap-1 shadow-sm">
+                      🩺 Doctor
+                    </button>
+                    <button type="button" onClick={() => handleQuickDemo('NURSE', 'nurse@hospital.gov.in')}
+                      className="py-1.5 px-2 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/60 text-[11px] font-medium transition-colors flex items-center justify-center gap-1 shadow-sm">
+                      👩‍⚕️ Nurse
+                    </button>
+                    <button type="button" onClick={() => handleQuickDemo('ADMIN', 'admin@hospital.gov.in')}
+                      className="py-1.5 px-2 rounded-lg bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-900/60 text-[11px] font-medium transition-colors flex items-center justify-center gap-1 shadow-sm">
+                      🏥 Admin
+                    </button>
+                  </div>
+                </div>
               </form>
             )}
 
